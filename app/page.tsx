@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -12,7 +12,112 @@ interface CompressResult {
   originalSize: number;
   compressedSize: number;
   steps: string[];
-  data: string;
+  blob: Blob;
+  url: string;
+}
+
+// Dynamic import gifsicle-wasm-browser
+let gifsicleModule: any = null;
+
+async function getGifsicle() {
+  if (!gifsicleModule) {
+    const mod = await import("gifsicle-wasm-browser");
+    gifsicleModule = mod.default || mod;
+  }
+  return gifsicleModule;
+}
+
+async function runGifsicle(
+  inputData: Uint8Array,
+  args: string[]
+): Promise<Uint8Array> {
+  const gifsicle = await getGifsicle();
+  const result = await gifsicle.run({
+    input: [{ file: "input.gif", data: inputData }],
+    command: [args.join(" ") + " -o /output input.gif"],
+  });
+  return result[0] as Uint8Array;
+}
+
+async function compressGif(
+  inputData: Uint8Array,
+  targetSize: number,
+  onStep: (msg: string) => void
+): Promise<{ data: Uint8Array; steps: string[] }> {
+  const steps: string[] = [];
+  let current = inputData;
+
+  // Check if already under target
+  if (current.length <= targetSize) {
+    steps.push(`すでに目標サイズ以下: ${formatSize(current.length)}`);
+    return { data: current, steps };
+  }
+
+  // Step 1: Lossless optimization
+  onStep("ロスレス最適化中...");
+  try {
+    const out = await runGifsicle(current, ["--optimize=3"]);
+    steps.push(`ロスレス最適化: ${formatSize(out.length)}`);
+    current = out;
+    if (current.length <= targetSize) return { data: current, steps };
+  } catch {
+    steps.push("ロスレス最適化: スキップ");
+  }
+
+  // Step 2: Color reduction
+  for (const colors of [128, 64, 32, 16]) {
+    onStep(`色数削減中 (${colors}色)...`);
+    try {
+      const out = await runGifsicle(current, [
+        "--optimize=3",
+        "--colors",
+        String(colors),
+      ]);
+      steps.push(`色数削減 (${colors}色): ${formatSize(out.length)}`);
+      current = out;
+      if (current.length <= targetSize) return { data: current, steps };
+    } catch {
+      steps.push(`色数削減 (${colors}色): スキップ`);
+    }
+  }
+
+  // Step 3: Lossy compression
+  for (const lossy of [30, 60, 100, 150, 200]) {
+    onStep(`lossy圧縮中 (${lossy})...`);
+    try {
+      const out = await runGifsicle(current, [
+        "--optimize=3",
+        `--lossy=${lossy}`,
+      ]);
+      steps.push(`lossy圧縮 (${lossy}): ${formatSize(out.length)}`);
+      current = out;
+      if (current.length <= targetSize) return { data: current, steps };
+    } catch {
+      steps.push(`lossy圧縮 (${lossy}): スキップ`);
+    }
+  }
+
+  // Step 4: Resize
+  for (const scale of [75, 50, 40]) {
+    onStep(`リサイズ中 (${scale}%)...`);
+    try {
+      const out = await runGifsicle(inputData, [
+        "--optimize=3",
+        `--lossy=200`,
+        "--resize-width",
+        `${scale}%`,
+        "--colors",
+        "32",
+      ]);
+      steps.push(`リサイズ (${scale}%): ${formatSize(out.length)}`);
+      current = out;
+      if (current.length <= targetSize) return { data: current, steps };
+    } catch {
+      steps.push(`リサイズ (${scale}%): スキップ`);
+    }
+  }
+
+  return { data: current, steps };
 }
 
 export default function Home() {
@@ -20,10 +125,18 @@ export default function Home() {
   const [preview, setPreview] = useState<string | null>(null);
   const [targetSize, setTargetSize] = useState(128);
   const [loading, setLoading] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string>("");
   const [result, setResult] = useState<CompressResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Cleanup object URLs
+  useEffect(() => {
+    return () => {
+      if (result?.url) URL.revokeObjectURL(result.url);
+    };
+  }, [result]);
 
   const handleFile = useCallback((f: File) => {
     if (!f.type.includes("gif") && !f.name.endsWith(".gif")) {
@@ -55,40 +168,44 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setStatusMsg("Wasmモジュール読み込み中...");
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("targetSize", String(targetSize));
+      const arrayBuffer = await file.arrayBuffer();
+      const inputData = new Uint8Array(arrayBuffer);
+      const target = targetSize * 1024;
 
-      const res = await fetch("/api/compress", {
-        method: "POST",
-        body: formData,
+      const { data, steps } = await compressGif(inputData, target, setStatusMsg);
+
+      const blob = new Blob([data as unknown as BlobPart], { type: "image/gif" });
+      const url = URL.createObjectURL(blob);
+
+      setResult({
+        originalSize: inputData.length,
+        compressedSize: data.length,
+        steps,
+        blob,
+        url,
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "エラーが発生しました");
-        return;
-      }
-
-      setResult(data);
-    } catch {
-      setError("通信エラーが発生しました");
+    } catch (err) {
+      console.error(err);
+      setError("圧縮中にエラーが発生しました");
     } finally {
       setLoading(false);
+      setStatusMsg("");
     }
   };
 
   const handleDownload = () => {
     if (!result) return;
     const a = document.createElement("a");
-    a.href = result.data;
+    a.href = result.url;
     a.download = `compressed-${file?.name || "output.gif"}`;
     a.click();
   };
 
   const reset = () => {
+    if (result?.url) URL.revokeObjectURL(result.url);
     setFile(null);
     setPreview(null);
     setResult(null);
@@ -103,7 +220,7 @@ export default function Home() {
           GIF Compressor
         </h1>
         <p className="text-center text-gray-400 text-sm">
-          GIFファイルを指定サイズ以下に圧縮します
+          GIFファイルを指定サイズ以下に圧縮します（ブラウザ内処理）
         </p>
 
         {/* Drop zone */}
@@ -213,7 +330,7 @@ export default function Home() {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                     />
                   </svg>
-                  圧縮中...
+                  {statusMsg || "圧縮中..."}
                 </span>
               ) : (
                 "圧縮する"
@@ -265,10 +382,10 @@ export default function Home() {
               ).toFixed(1)}
               %
               {result.compressedSize <= targetSize * 1024 ? (
-                <span className="ml-2 text-green-400">目標達成</span>
+                <span className="ml-2 text-green-400">✓ 目標達成</span>
               ) : (
                 <span className="ml-2 text-yellow-400">
-                  目標未達（これ以上の圧縮は困難です）
+                  ⚠ 目標未達（これ以上の圧縮は困難です）
                 </span>
               )}
             </p>
@@ -290,7 +407,7 @@ export default function Home() {
             {/* Preview */}
             <div className="text-center">
               <img
-                src={result.data}
+                src={result.url}
                 alt="Compressed GIF"
                 className="max-h-64 mx-auto rounded-lg"
               />
