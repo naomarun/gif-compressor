@@ -472,7 +472,7 @@ export default function Home() {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const [slackEmojiMode, setSlackEmojiMode] = useState(false);
+  const [slackEmojiMode, setSlackEmojiMode] = useState(true);
 
   // Crop state
   const [crop, setCrop] = useState<CropRect | null>(null);
