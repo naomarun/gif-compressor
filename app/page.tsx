@@ -68,11 +68,20 @@ function getGifWidth(data: Uint8Array): number {
   return 0;
 }
 
+function getGifHeight(data: Uint8Array): number {
+  // GIF height is at bytes 8-9 (little-endian)
+  if (data.length > 9) {
+    return data[8] | (data[9] << 8);
+  }
+  return 0;
+}
+
 async function compressGif(
   inputData: Uint8Array,
   targetSize: number,
   onStep: (msg: string) => void,
-  crop?: CropRect
+  crop?: CropRect,
+  slackEmojiMode?: boolean
 ): Promise<{ data: Uint8Array; steps: string[] }> {
   const steps: string[] = [];
   let current = inputData;
@@ -88,6 +97,25 @@ async function compressGif(
       if (current.length <= targetSize) return { data: current, steps };
     } catch {
       steps.push("クロップ: エラー");
+    }
+  }
+
+  // Slack emoji mode: resize-fit 128x128 (after crop, before compression)
+  if (slackEmojiMode) {
+    const w = getGifWidth(current);
+    const h = getGifHeight(current);
+    if (w > 128 || h > 128) {
+      onStep("Slack絵文字用リサイズ中 (128x128)...");
+      try {
+        const out = await runGifsicle(current, ["--resize-fit", "128x128"]);
+        steps.push(`Slack絵文字リサイズ (${w}x${h} → 128x128): ${formatSize(out.length)}`);
+        current = out;
+        if (current.length <= targetSize) return { data: current, steps };
+      } catch {
+        steps.push("Slack絵文字リサイズ: エラー");
+      }
+    } else {
+      steps.push(`リサイズ不要 (${w}x${h} は128x128以下)`);
     }
   }
 
@@ -444,6 +472,8 @@ export default function Home() {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const [slackEmojiMode, setSlackEmojiMode] = useState(false);
+
   // Crop state
   const [crop, setCrop] = useState<CropRect | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
@@ -498,7 +528,7 @@ export default function Home() {
     try {
       const arrayBuffer = await file.arrayBuffer();
       const inputData = new Uint8Array(arrayBuffer);
-      const target = targetSize * 1024;
+      const target = (slackEmojiMode ? 128 : targetSize) * 1024;
 
       // Build crop rect in natural pixel coords (rounded to integers)
       let cropForGifsicle: CropRect | undefined;
@@ -511,7 +541,7 @@ export default function Home() {
         };
       }
 
-      const { data, steps } = await compressGif(inputData, target, setStatusMsg, cropForGifsicle);
+      const { data, steps } = await compressGif(inputData, target, setStatusMsg, cropForGifsicle, slackEmojiMode);
 
       const blob = new Blob([data as unknown as BlobPart], { type: "image/gif" });
       const url = URL.createObjectURL(blob);
@@ -707,17 +737,43 @@ export default function Home() {
 
         {/* Target size input */}
         {file && !result && (
-          <div className="flex items-center gap-4 justify-center">
-            <label className="text-sm text-white">目標サイズ:</label>
-            <input
-              type="number"
-              value={targetSize}
-              onChange={(e) => setTargetSize(Number(e.target.value))}
-              min={8}
-              max={10240}
-              className="w-24 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-center text-sm text-white focus:outline-none focus:border-purple-400"
-            />
-            <span className="text-sm text-white">KB</span>
+          <div className="space-y-3">
+            <div className="flex items-center gap-4 justify-center">
+              <label className="text-sm text-white">目標サイズ:</label>
+              <input
+                type="number"
+                value={slackEmojiMode ? 128 : targetSize}
+                onChange={(e) => setTargetSize(Number(e.target.value))}
+                min={8}
+                max={10240}
+                disabled={slackEmojiMode}
+                className="w-24 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-center text-sm text-white focus:outline-none focus:border-purple-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+              <span className="text-sm text-white">KB</span>
+            </div>
+
+            {/* Slack Emoji Mode toggle */}
+            <div className="flex flex-col items-center gap-1">
+              <label className="flex items-center gap-3 cursor-pointer select-none">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={slackEmojiMode}
+                    onChange={(e) => {
+                      setSlackEmojiMode(e.target.checked);
+                      if (e.target.checked) setTargetSize(128);
+                    }}
+                    className="sr-only peer"
+                  />
+                  <div className="w-10 h-5 bg-gray-700 rounded-full peer-checked:bg-purple-600 transition-colors" />
+                  <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full transition-transform peer-checked:translate-x-5" />
+                </div>
+                <span className="text-sm text-white">Slack絵文字モード</span>
+              </label>
+              {slackEmojiMode && (
+                <p className="text-xs text-purple-400">128x128px / 128KB以下に自動調整</p>
+              )}
+            </div>
           </div>
         )}
 
@@ -754,7 +810,7 @@ export default function Home() {
                     {statusMsg || "圧縮中..."}
                   </span>
                 ) : (
-                  isCropped ? "クロップ＆圧縮する" : "圧縮する"
+                  slackEmojiMode ? "Slack絵文字用に変換" : isCropped ? "クロップ＆圧縮する" : "圧縮する"
                 )}
               </button>
             )}
