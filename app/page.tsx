@@ -41,9 +41,15 @@ async function runGifsicle(
   const gifsicle = await getGifsicle();
   const result = await gifsicle.run({
     input: [{ file: "input.gif", data: inputData }],
-    command: [args.join(" ") + " -o /output input.gif"],
+    command: [args.join(" ") + " -o /out/out.gif input.gif"],
   });
-  return result[0] as Uint8Array;
+  // result is [{file: Uint8Array, name: string}]
+  if (result && result[0]) {
+    const item = result[0];
+    if (item.file) return item.file as Uint8Array;
+    if (item instanceof Uint8Array) return item;
+  }
+  throw new Error("gifsicle produced no output");
 }
 
 async function compressGif(
