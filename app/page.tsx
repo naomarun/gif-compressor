@@ -16,6 +16,13 @@ interface CompressResult {
   url: string;
 }
 
+interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 // Dynamic import gifsicle-wasm-browser
 let gifsicleModule: any = null;
 
@@ -42,10 +49,25 @@ async function runGifsicle(
 async function compressGif(
   inputData: Uint8Array,
   targetSize: number,
-  onStep: (msg: string) => void
+  onStep: (msg: string) => void,
+  crop?: CropRect
 ): Promise<{ data: Uint8Array; steps: string[] }> {
   const steps: string[] = [];
   let current = inputData;
+
+  // Step 0: Crop if specified
+  if (crop) {
+    onStep("クロップ中...");
+    try {
+      const cropArg = `${crop.x},${crop.y}+${crop.w}x${crop.h}`;
+      const out = await runGifsicle(current, ["--crop", cropArg]);
+      steps.push(`クロップ (${cropArg}): ${formatSize(out.length)}`);
+      current = out;
+      if (current.length <= targetSize) return { data: current, steps };
+    } catch {
+      steps.push("クロップ: エラー");
+    }
+  }
 
   // Check if already under target
   if (current.length <= targetSize) {
@@ -101,7 +123,7 @@ async function compressGif(
   for (const scale of [75, 50, 40]) {
     onStep(`リサイズ中 (${scale}%)...`);
     try {
-      const out = await runGifsicle(inputData, [
+      const out = await runGifsicle(current, [
         "--optimize=3",
         `--lossy=200`,
         "--resize-width",
@@ -120,6 +142,273 @@ async function compressGif(
   return { data: current, steps };
 }
 
+type DragMode =
+  | null
+  | "move"
+  | "nw"
+  | "ne"
+  | "sw"
+  | "se"
+  | "n"
+  | "s"
+  | "e"
+  | "w";
+
+function CropOverlay({
+  imageRef,
+  naturalWidth,
+  naturalHeight,
+  crop,
+  onCropChange,
+}: {
+  imageRef: React.RefObject<HTMLImageElement | null>;
+  naturalWidth: number;
+  naturalHeight: number;
+  crop: CropRect;
+  onCropChange: (c: CropRect) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    mode: DragMode;
+    startX: number;
+    startY: number;
+    startCrop: CropRect;
+  } | null>(null);
+
+  const getDisplayRect = useCallback(() => {
+    const img = imageRef.current;
+    if (!img) return { dw: 1, dh: 1, offsetX: 0, offsetY: 0 };
+    const rect = img.getBoundingClientRect();
+    const containerRect = containerRef.current?.getBoundingClientRect();
+    return {
+      dw: rect.width,
+      dh: rect.height,
+      offsetX: containerRect ? rect.left - containerRect.left : 0,
+      offsetY: containerRect ? rect.top - containerRect.top : 0,
+    };
+  }, [imageRef]);
+
+  // Convert natural coords to display coords
+  const toDisplay = useCallback(
+    (c: CropRect) => {
+      const { dw, dh } = getDisplayRect();
+      const scaleX = dw / naturalWidth;
+      const scaleY = dh / naturalHeight;
+      return {
+        x: c.x * scaleX,
+        y: c.y * scaleY,
+        w: c.w * scaleX,
+        h: c.h * scaleY,
+      };
+    },
+    [getDisplayRect, naturalWidth, naturalHeight]
+  );
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent, mode: DragMode) => {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      dragRef.current = {
+        mode,
+        startX: e.clientX,
+        startY: e.clientY,
+        startCrop: { ...crop },
+      };
+    },
+    [crop]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragRef.current) return;
+      const { mode, startX, startY, startCrop } = dragRef.current;
+      const { dw, dh } = getDisplayRect();
+      const scaleX = naturalWidth / dw;
+      const scaleY = naturalHeight / dh;
+
+      const dx = Math.round((e.clientX - startX) * scaleX);
+      const dy = Math.round((e.clientY - startY) * scaleY);
+
+      let { x, y, w, h } = startCrop;
+
+      const MIN_SIZE = 10;
+
+      if (mode === "move") {
+        x = startCrop.x + dx;
+        y = startCrop.y + dy;
+        // Clamp
+        x = Math.max(0, Math.min(x, naturalWidth - w));
+        y = Math.max(0, Math.min(y, naturalHeight - h));
+      } else {
+        // Resize handles
+        if (mode === "nw" || mode === "w" || mode === "sw") {
+          const newX = Math.max(0, Math.min(startCrop.x + dx, startCrop.x + startCrop.w - MIN_SIZE));
+          w = startCrop.w - (newX - startCrop.x);
+          x = newX;
+        }
+        if (mode === "ne" || mode === "e" || mode === "se") {
+          w = Math.max(MIN_SIZE, Math.min(startCrop.w + dx, naturalWidth - startCrop.x));
+        }
+        if (mode === "nw" || mode === "n" || mode === "ne") {
+          const newY = Math.max(0, Math.min(startCrop.y + dy, startCrop.y + startCrop.h - MIN_SIZE));
+          h = startCrop.h - (newY - startCrop.y);
+          y = newY;
+        }
+        if (mode === "sw" || mode === "s" || mode === "se") {
+          h = Math.max(MIN_SIZE, Math.min(startCrop.h + dy, naturalHeight - startCrop.y));
+        }
+      }
+
+      onCropChange({ x, y, w, h });
+    },
+    [getDisplayRect, naturalWidth, naturalHeight, onCropChange]
+  );
+
+  const handlePointerUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  const dc = toDisplay(crop);
+  const { dw, dh, offsetX, offsetY } = getDisplayRect();
+
+  const handleSize = 10;
+  const handles: { mode: DragMode; style: React.CSSProperties; cursor: string }[] = [
+    // Corners
+    { mode: "nw", cursor: "nwse-resize", style: { left: -handleSize / 2, top: -handleSize / 2 } },
+    { mode: "ne", cursor: "nesw-resize", style: { right: -handleSize / 2, top: -handleSize / 2 } },
+    { mode: "sw", cursor: "nesw-resize", style: { left: -handleSize / 2, bottom: -handleSize / 2 } },
+    { mode: "se", cursor: "nwse-resize", style: { right: -handleSize / 2, bottom: -handleSize / 2 } },
+    // Edges
+    { mode: "n", cursor: "ns-resize", style: { left: "50%", top: -handleSize / 2, transform: "translateX(-50%)" } },
+    { mode: "s", cursor: "ns-resize", style: { left: "50%", bottom: -handleSize / 2, transform: "translateX(-50%)" } },
+    { mode: "w", cursor: "ew-resize", style: { left: -handleSize / 2, top: "50%", transform: "translateY(-50%)" } },
+    { mode: "e", cursor: "ew-resize", style: { right: -handleSize / 2, top: "50%", transform: "translateY(-50%)" } },
+  ];
+
+  return (
+    <div
+      ref={containerRef}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      style={{
+        position: "absolute",
+        left: offsetX,
+        top: offsetY,
+        width: dw,
+        height: dh,
+      }}
+    >
+      {/* Dark overlay - top */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: "100%",
+          height: dc.y,
+          background: "rgba(0,0,0,0.55)",
+          pointerEvents: "none",
+        }}
+      />
+      {/* Dark overlay - bottom */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: dc.y + dc.h,
+          width: "100%",
+          height: dh - dc.y - dc.h,
+          background: "rgba(0,0,0,0.55)",
+          pointerEvents: "none",
+        }}
+      />
+      {/* Dark overlay - left */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: dc.y,
+          width: dc.x,
+          height: dc.h,
+          background: "rgba(0,0,0,0.55)",
+          pointerEvents: "none",
+        }}
+      />
+      {/* Dark overlay - right */}
+      <div
+        style={{
+          position: "absolute",
+          left: dc.x + dc.w,
+          top: dc.y,
+          width: dw - dc.x - dc.w,
+          height: dc.h,
+          background: "rgba(0,0,0,0.55)",
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* Crop selection area */}
+      <div
+        onPointerDown={(e) => handlePointerDown(e, "move")}
+        style={{
+          position: "absolute",
+          left: dc.x,
+          top: dc.y,
+          width: dc.w,
+          height: dc.h,
+          border: "2px solid rgba(168,85,247,0.9)",
+          cursor: "move",
+          boxSizing: "border-box",
+        }}
+      >
+        {/* Rule of thirds lines */}
+        <div style={{ position: "absolute", left: "33.3%", top: 0, width: 1, height: "100%", background: "rgba(168,85,247,0.3)" }} />
+        <div style={{ position: "absolute", left: "66.6%", top: 0, width: 1, height: "100%", background: "rgba(168,85,247,0.3)" }} />
+        <div style={{ position: "absolute", left: 0, top: "33.3%", width: "100%", height: 1, background: "rgba(168,85,247,0.3)" }} />
+        <div style={{ position: "absolute", left: 0, top: "66.6%", width: "100%", height: 1, background: "rgba(168,85,247,0.3)" }} />
+
+        {/* Resize handles */}
+        {handles.map((h) => (
+          <div
+            key={h.mode}
+            onPointerDown={(e) => handlePointerDown(e, h.mode)}
+            style={{
+              position: "absolute",
+              width: handleSize,
+              height: handleSize,
+              background: "rgba(168,85,247,0.9)",
+              border: "1px solid white",
+              borderRadius: 2,
+              cursor: h.cursor,
+              zIndex: 10,
+              ...h.style,
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Dimension label */}
+      <div
+        style={{
+          position: "absolute",
+          left: dc.x,
+          top: dc.y - 24,
+          fontSize: 11,
+          color: "rgba(168,85,247,1)",
+          background: "rgba(0,0,0,0.7)",
+          padding: "1px 6px",
+          borderRadius: 4,
+          whiteSpace: "nowrap",
+          pointerEvents: "none",
+        }}
+      >
+        {Math.round(crop.w)} x {Math.round(crop.h)} px
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -130,6 +419,11 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Crop state
+  const [crop, setCrop] = useState<CropRect | null>(null);
+  const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const cropImgRef = useRef<HTMLImageElement | null>(null);
 
   // Cleanup object URLs
   useEffect(() => {
@@ -151,6 +445,8 @@ export default function Home() {
     setPreview(URL.createObjectURL(f));
     setResult(null);
     setError(null);
+    setCrop(null);
+    setNaturalSize(null);
   }, []);
 
   const handleDrop = useCallback(
@@ -162,6 +458,11 @@ export default function Home() {
     },
     [handleFile]
   );
+
+  const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+  }, []);
 
   const handleCompress = async () => {
     if (!file) return;
@@ -175,7 +476,18 @@ export default function Home() {
       const inputData = new Uint8Array(arrayBuffer);
       const target = targetSize * 1024;
 
-      const { data, steps } = await compressGif(inputData, target, setStatusMsg);
+      // Build crop rect in natural pixel coords (rounded to integers)
+      let cropForGifsicle: CropRect | undefined;
+      if (crop && naturalSize) {
+        cropForGifsicle = {
+          x: Math.round(crop.x),
+          y: Math.round(crop.y),
+          w: Math.round(crop.w),
+          h: Math.round(crop.h),
+        };
+      }
+
+      const { data, steps } = await compressGif(inputData, target, setStatusMsg, cropForGifsicle);
 
       const blob = new Blob([data as unknown as BlobPart], { type: "image/gif" });
       const url = URL.createObjectURL(blob);
@@ -210,8 +522,24 @@ export default function Home() {
     setPreview(null);
     setResult(null);
     setError(null);
+    setCrop(null);
+    setNaturalSize(null);
     if (inputRef.current) inputRef.current.value = "";
   };
+
+  const initCrop = useCallback(() => {
+    if (!naturalSize) return;
+    setCrop({ x: 0, y: 0, w: naturalSize.w, h: naturalSize.h });
+  }, [naturalSize]);
+
+  const resetCrop = useCallback(() => {
+    setCrop(null);
+  }, []);
+
+  const isCropped = crop && naturalSize && (
+    crop.x !== 0 || crop.y !== 0 ||
+    Math.round(crop.w) !== naturalSize.w || Math.round(crop.h) !== naturalSize.h
+  );
 
   return (
     <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
@@ -223,43 +551,32 @@ export default function Home() {
           GIFファイルを指定サイズ以下に圧縮します（ブラウザ内処理）
         </p>
 
-        {/* Drop zone */}
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
-          className={`relative border-2 border-dashed rounded-2xl p-12 sm:p-16 text-center cursor-pointer transition-all ${
-            dragOver
-              ? "border-purple-400 bg-purple-400/10"
-              : "border-gray-700 hover:border-gray-500 bg-gray-900/50"
-          }`}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".gif,image/gif"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) handleFile(f);
+        {/* Drop zone - only shown when no file is loaded */}
+        {!file && (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
             }}
-          />
-          {preview ? (
-            <div className="space-y-3">
-              <img
-                src={preview}
-                alt="Preview"
-                className="max-h-48 mx-auto rounded-lg"
-              />
-              <p className="text-sm text-gray-400">
-                {file?.name} ({formatSize(file?.size || 0)})
-              </p>
-            </div>
-          ) : (
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => inputRef.current?.click()}
+            className={`relative border-2 border-dashed rounded-2xl p-12 sm:p-16 text-center cursor-pointer transition-all ${
+              dragOver
+                ? "border-purple-400 bg-purple-400/10"
+                : "border-gray-700 hover:border-gray-500 bg-gray-900/50"
+            }`}
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".gif,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+              }}
+            />
             <div className="space-y-3">
               <svg
                 className="w-12 h-12 mx-auto text-gray-600"
@@ -282,11 +599,90 @@ export default function Home() {
                 </span>
               </p>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Hidden file input when file is loaded */}
+        {file && (
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".gif,image/gif"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleFile(f);
+            }}
+          />
+        )}
+
+        {/* Image preview with crop overlay */}
+        {file && preview && !result && (
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-400">
+                {file.name} ({formatSize(file.size)})
+                {naturalSize && (
+                  <span className="ml-2 text-gray-500">
+                    {naturalSize.w} x {naturalSize.h} px
+                  </span>
+                )}
+              </p>
+            </div>
+
+            {/* Image container with crop overlay */}
+            <div className="relative flex justify-center select-none" style={{ touchAction: "none" }}>
+              <div className="relative inline-block">
+                <img
+                  ref={cropImgRef}
+                  src={preview}
+                  alt="プレビュー"
+                  onLoad={handleImageLoad}
+                  className="max-h-80 rounded-lg block"
+                  draggable={false}
+                />
+                {crop && naturalSize && (
+                  <CropOverlay
+                    imageRef={cropImgRef}
+                    naturalWidth={naturalSize.w}
+                    naturalHeight={naturalSize.h}
+                    crop={crop}
+                    onCropChange={setCrop}
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Crop controls */}
+            <div className="flex items-center justify-center gap-3">
+              {!crop ? (
+                <button
+                  onClick={initCrop}
+                  disabled={!naturalSize}
+                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-sm transition-colors"
+                >
+                  クロップ範囲を選択
+                </button>
+              ) : (
+                <>
+                  <span className="text-xs text-gray-500">
+                    クロップ: {Math.round(crop.x)},{Math.round(crop.y)} +{" "}
+                    {Math.round(crop.w)} x {Math.round(crop.h)}
+                  </span>
+                  <button
+                    onClick={resetCrop}
+                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+                  >
+                    クロップ解除
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Target size input */}
-        {file && (
+        {file && !result && (
           <div className="flex items-center gap-4 justify-center">
             <label className="text-sm text-gray-400">目標サイズ:</label>
             <input
@@ -304,38 +700,40 @@ export default function Home() {
         {/* Actions */}
         {file && (
           <div className="flex gap-3 justify-center">
-            <button
-              onClick={handleCompress}
-              disabled={loading}
-              className="px-6 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:cursor-not-allowed rounded-xl font-medium transition-colors"
-            >
-              {loading ? (
-                <span className="flex items-center gap-2">
-                  <svg
-                    className="w-4 h-4 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                  {statusMsg || "圧縮中..."}
-                </span>
-              ) : (
-                "圧縮する"
-              )}
-            </button>
+            {!result && (
+              <button
+                onClick={handleCompress}
+                disabled={loading}
+                className="px-6 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-purple-800 disabled:cursor-not-allowed rounded-xl font-medium transition-colors"
+              >
+                {loading ? (
+                  <span className="flex items-center gap-2">
+                    <svg
+                      className="w-4 h-4 animate-spin"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                    {statusMsg || "圧縮中..."}
+                  </span>
+                ) : (
+                  isCropped ? "クロップ＆圧縮する" : "圧縮する"
+                )}
+              </button>
+            )}
             <button
               onClick={reset}
               className="px-6 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl font-medium transition-colors"
@@ -382,10 +780,10 @@ export default function Home() {
               ).toFixed(1)}
               %
               {result.compressedSize <= targetSize * 1024 ? (
-                <span className="ml-2 text-green-400">✓ 目標達成</span>
+                <span className="ml-2 text-green-400">&#x2713; 目標達成</span>
               ) : (
                 <span className="ml-2 text-yellow-400">
-                  ⚠ 目標未達（これ以上の圧縮は困難です）
+                  &#x26A0; 目標未達（これ以上の圧縮は困難です）
                 </span>
               )}
             </p>
@@ -408,7 +806,7 @@ export default function Home() {
             <div className="text-center">
               <img
                 src={result.url}
-                alt="Compressed GIF"
+                alt="圧縮後GIF"
                 className="max-h-64 mx-auto rounded-lg"
               />
             </div>
