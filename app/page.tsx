@@ -23,33 +23,49 @@ interface CropRect {
   h: number;
 }
 
-// Dynamic import gifsicle-wasm-browser
-let gifsicleModule: any = null;
-
-async function getGifsicle() {
-  if (!gifsicleModule) {
-    const mod = await import("gifsicle-wasm-browser");
-    gifsicleModule = mod.default || mod;
-  }
-  return gifsicleModule;
+// Load gifsicle-wasm-browser via script tag (public/gifsicle.min.js)
+function loadGifsicleScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window !== "undefined" && window.gifsicle) {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "/gifsicle.min.js";
+    script.onload = () => {
+      // Wait a tick for the global to be set
+      setTimeout(() => resolve(), 100);
+    };
+    script.onerror = () => reject(new Error("Failed to load gifsicle"));
+    document.head.appendChild(script);
+  });
 }
 
 async function runGifsicle(
   inputData: Uint8Array,
   args: string[]
 ): Promise<Uint8Array> {
-  const gifsicle = await getGifsicle();
-  const result = await gifsicle.run({
-    input: [{ file: "input.gif", data: inputData }],
-    command: [args.join(" ") + " -o /out/out.gif input.gif"],
+  await loadGifsicleScript();
+  const command = [args.join(" ") + " -o /out/out.gif input.gif"];
+  const result = await window.gifsicle.run({
+    input: [{ file: new Blob([inputData.buffer as ArrayBuffer], { type: "image/gif" }), name: "input.gif" }],
+    command,
   });
-  // result is [{file: Uint8Array, name: string}]
-  if (result && result[0]) {
-    const item = result[0];
-    if (item.file) return item.file as Uint8Array;
-    if (item instanceof Uint8Array) return item;
+  if (!result || result.length === 0) {
+    throw new Error("gifsicle produced no output");
   }
-  throw new Error("gifsicle produced no output");
+  // result is an array of File objects
+  const file = result[0];
+  const buf = await file.arrayBuffer();
+  return new Uint8Array(buf);
+}
+
+function getGifWidth(data: Uint8Array): number {
+  // GIF width is at bytes 6-7 (little-endian)
+  if (data.length > 7) {
+    return data[6] | (data[7] << 8);
+  }
+  return 0;
 }
 
 async function compressGif(
@@ -126,22 +142,24 @@ async function compressGif(
   }
 
   // Step 4: Resize
+  const origWidth = getGifWidth(inputData);
   for (const scale of [75, 50, 40]) {
-    onStep(`リサイズ中 (${scale}%)...`);
+    const newWidth = Math.max(1, Math.round(origWidth * scale / 100));
+    onStep(`リサイズ中 (${scale}% → ${newWidth}px)...`);
     try {
-      const out = await runGifsicle(current, [
+      const out = await runGifsicle(inputData, [
         "--optimize=3",
         `--lossy=200`,
         "--resize-width",
-        `${scale}%`,
+        String(newWidth),
         "--colors",
         "32",
       ]);
-      steps.push(`リサイズ (${scale}%): ${formatSize(out.length)}`);
+      steps.push(`リサイズ (${scale}% → ${newWidth}px): ${formatSize(out.length)}`);
       current = out;
       if (current.length <= targetSize) return { data: current, steps };
     } catch {
-      steps.push(`リサイズ (${scale}%): スキップ`);
+      steps.push(`リサイズ (${scale}% → ${newWidth}px): スキップ`);
     }
   }
 

@@ -1,14 +1,12 @@
 declare module "gifsicle-wasm-browser" {
-  interface GifsicleInput {
-    file: string;
-    data: Uint8Array;
-  }
-  interface GifsicleOptions {
-    input: GifsicleInput[];
-    command: string[];
-  }
   const gifsicle: {
-    run(options: GifsicleOptions): Promise<Uint8Array[]>;
+    run(options: Record<string, unknown>): Promise<File[]>;
   };
   export default gifsicle;
+}
+
+interface Window {
+  gifsicle: {
+    run(options: Record<string, unknown>): Promise<File[]>;
+  };
 }
