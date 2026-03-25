@@ -553,7 +553,7 @@ export default function Home() {
         <h1 className="text-3xl sm:text-4xl font-bold text-center bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
           GIF Compressor
         </h1>
-        <p className="text-center text-white/70 text-sm">
+        <p className="text-center text-white text-sm">
           GIFファイルを指定サイズ以下に圧縮します（ブラウザ内処理）
         </p>
 
@@ -570,7 +570,7 @@ export default function Home() {
             className={`relative border-2 border-dashed rounded-2xl p-12 sm:p-16 text-center cursor-pointer transition-all ${
               dragOver
                 ? "border-purple-400 bg-purple-400/10"
-                : "border-gray-700 hover:border-gray-500 bg-gray-900/50"
+                : "border-[#333] hover:border-[#555] bg-[#111]"
             }`}
           >
             <input
@@ -585,7 +585,7 @@ export default function Home() {
             />
             <div className="space-y-3">
               <svg
-                className="w-12 h-12 mx-auto text-white/80"
+                className="w-12 h-12 mx-auto text-white"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -597,7 +597,7 @@ export default function Home() {
                   d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                 />
               </svg>
-              <p className="text-white/80">
+              <p className="text-white">
                 GIFファイルをドラッグ＆ドロップ
                 <br />
                 <span className="text-sm text-white/90">
@@ -624,9 +624,9 @@ export default function Home() {
 
         {/* Image preview with crop overlay */}
         {file && preview && !result && (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+          <div className="bg-[#111] border border-[#333] rounded-2xl p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-white/80">
+              <p className="text-sm text-white">
                 {file.name} ({formatSize(file.size)})
                 {naturalSize && (
                   <span className="ml-2 text-white/90">
@@ -690,7 +690,7 @@ export default function Home() {
         {/* Target size input */}
         {file && !result && (
           <div className="flex items-center gap-4 justify-center">
-            <label className="text-sm text-white/80">目標サイズ:</label>
+            <label className="text-sm text-white">目標サイズ:</label>
             <input
               type="number"
               value={targetSize}
@@ -699,7 +699,7 @@ export default function Home() {
               max={10240}
               className="w-24 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-center text-sm text-white focus:outline-none focus:border-purple-400"
             />
-            <span className="text-sm text-white/80">KB</span>
+            <span className="text-sm text-white">KB</span>
           </div>
         )}
 
@@ -758,18 +758,18 @@ export default function Home() {
 
         {/* Result */}
         {result && (
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+          <div className="bg-[#111] border border-[#333] rounded-2xl p-6 space-y-4">
             <h2 className="font-semibold text-lg">圧縮結果</h2>
 
             {/* Size comparison */}
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-gray-800 rounded-xl p-4 text-center">
+              <div className="bg-[#1a1a1a] rounded-xl p-4 text-center">
                 <p className="text-xs text-white/90 mb-1">圧縮前</p>
                 <p className="text-xl font-bold text-white/90">
                   {formatSize(result.originalSize)}
                 </p>
               </div>
-              <div className="bg-gray-800 rounded-xl p-4 text-center">
+              <div className="bg-[#1a1a1a] rounded-xl p-4 text-center">
                 <p className="text-xs text-white/90 mb-1">圧縮後</p>
                 <p className="text-xl font-bold text-green-400">
                   {formatSize(result.compressedSize)}
@@ -777,7 +777,7 @@ export default function Home() {
               </div>
             </div>
 
-            <p className="text-center text-sm text-white/80">
+            <p className="text-center text-sm text-white">
               削減率:{" "}
               {(
                 ((result.originalSize - result.compressedSize) /
@@ -799,7 +799,7 @@ export default function Home() {
               <summary className="text-white/90 cursor-pointer hover:text-white/90">
                 圧縮ステップ詳細
               </summary>
-              <ul className="mt-2 space-y-1 text-white/80">
+              <ul className="mt-2 space-y-1 text-white">
                 {result.steps.map((step, i) => (
                   <li key={i} className="pl-4 border-l-2 border-gray-700">
                     {step}
