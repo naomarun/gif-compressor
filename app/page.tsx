@@ -553,7 +553,7 @@ export default function Home() {
         <h1 className="text-3xl sm:text-4xl font-bold text-center bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
           GIF Compressor
         </h1>
-        <p className="text-center text-gray-200 text-sm">
+        <p className="text-center text-white/70 text-sm">
           GIFファイルを指定サイズ以下に圧縮します（ブラウザ内処理）
         </p>
 
@@ -585,7 +585,7 @@ export default function Home() {
             />
             <div className="space-y-3">
               <svg
-                className="w-12 h-12 mx-auto text-gray-200"
+                className="w-12 h-12 mx-auto text-white/80"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -597,10 +597,10 @@ export default function Home() {
                   d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                 />
               </svg>
-              <p className="text-gray-200">
+              <p className="text-white/80">
                 GIFファイルをドラッグ＆ドロップ
                 <br />
-                <span className="text-sm text-gray-100">
+                <span className="text-sm text-white/90">
                   またはクリックして選択（最大10MB）
                 </span>
               </p>
@@ -626,10 +626,10 @@ export default function Home() {
         {file && preview && !result && (
           <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-sm text-gray-200">
+              <p className="text-sm text-white/80">
                 {file.name} ({formatSize(file.size)})
                 {naturalSize && (
-                  <span className="ml-2 text-gray-100">
+                  <span className="ml-2 text-white/90">
                     {naturalSize.w} x {naturalSize.h} px
                   </span>
                 )}
@@ -665,19 +665,19 @@ export default function Home() {
                 <button
                   onClick={initCrop}
                   disabled={!naturalSize}
-                  className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-sm transition-colors"
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-lg text-sm text-white transition-colors"
                 >
-                  クロップ範囲を選択
+                  ✂️ クロップ範囲を選択
                 </button>
               ) : (
                 <>
-                  <span className="text-xs text-gray-100">
+                  <span className="text-xs text-white/90">
                     クロップ: {Math.round(crop.x)},{Math.round(crop.y)} +{" "}
                     {Math.round(crop.w)} x {Math.round(crop.h)}
                   </span>
                   <button
                     onClick={resetCrop}
-                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm text-white transition-colors"
                   >
                     クロップ解除
                   </button>
@@ -690,16 +690,16 @@ export default function Home() {
         {/* Target size input */}
         {file && !result && (
           <div className="flex items-center gap-4 justify-center">
-            <label className="text-sm text-gray-200">目標サイズ:</label>
+            <label className="text-sm text-white/80">目標サイズ:</label>
             <input
               type="number"
               value={targetSize}
               onChange={(e) => setTargetSize(Number(e.target.value))}
               min={8}
               max={10240}
-              className="w-24 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-center text-sm focus:outline-none focus:border-purple-400"
+              className="w-24 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-center text-sm text-white focus:outline-none focus:border-purple-400"
             />
-            <span className="text-sm text-gray-200">KB</span>
+            <span className="text-sm text-white/80">KB</span>
           </div>
         )}
 
@@ -742,7 +742,7 @@ export default function Home() {
             )}
             <button
               onClick={reset}
-              className="px-6 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl font-medium transition-colors"
+              className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium text-white transition-colors"
             >
               リセット
             </button>
@@ -764,20 +764,20 @@ export default function Home() {
             {/* Size comparison */}
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-gray-800 rounded-xl p-4 text-center">
-                <p className="text-xs text-gray-100 mb-1">圧縮前</p>
-                <p className="text-xl font-bold text-gray-100">
+                <p className="text-xs text-white/90 mb-1">圧縮前</p>
+                <p className="text-xl font-bold text-white/90">
                   {formatSize(result.originalSize)}
                 </p>
               </div>
               <div className="bg-gray-800 rounded-xl p-4 text-center">
-                <p className="text-xs text-gray-100 mb-1">圧縮後</p>
+                <p className="text-xs text-white/90 mb-1">圧縮後</p>
                 <p className="text-xl font-bold text-green-400">
                   {formatSize(result.compressedSize)}
                 </p>
               </div>
             </div>
 
-            <p className="text-center text-sm text-gray-200">
+            <p className="text-center text-sm text-white/80">
               削減率:{" "}
               {(
                 ((result.originalSize - result.compressedSize) /
@@ -796,10 +796,10 @@ export default function Home() {
 
             {/* Steps */}
             <details className="text-sm">
-              <summary className="text-gray-100 cursor-pointer hover:text-gray-100">
+              <summary className="text-white/90 cursor-pointer hover:text-white/90">
                 圧縮ステップ詳細
               </summary>
-              <ul className="mt-2 space-y-1 text-gray-200">
+              <ul className="mt-2 space-y-1 text-white/80">
                 {result.steps.map((step, i) => (
                   <li key={i} className="pl-4 border-l-2 border-gray-700">
                     {step}
